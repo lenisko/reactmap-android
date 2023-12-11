@@ -35,7 +35,7 @@ jobs:
     - name: Sign APK and create release
       run: |
         cd /home/runner/work/reactmap-android/reactmap-android/
-        ./gradlew assembleRelease -Pandroid.injected.signing.store.file=/home/runner/work/reactmap-android/reactmap-android/keystore.jks -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} -Pandroid.injected.signing.key.alias=${{ secrets.KEY_ALIAS }} -Pandroid.injected.signing.key.password=${{ secrets.KEY_PASSWORD }} -Preactmap.defaultHost=${{ secrets.MAP_URL }} -Preactmap.packageName=${{ secrets.PACKAGE_NAME }} -Preactmap.appName=${{ secrets.APP_NAME }}
+        ./gradlew assembleRelease -Pandroid.injected.signing.store.file=/home/runner/work/reactmap-android/reactmap-android/keystore.jks -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} -Pandroid.injected.signing.key.alias=${{ secrets.KEY_ALIAS }} -Pandroid.injected.signing.key.password=${{ secrets.KEY_PASSWORD }} -Preactmap.defaultDomain=${{ secrets.MAP_URL }} -Preactmap.packageName=${{ secrets.PACKAGE_NAME }} -Preactmap.appName=${{ secrets.APP_NAME }}
 
     - name: List APK directory - apk
       run: ls -R /home/runner/work/reactmap-android/reactmap-android/app/build/outputs/apk/
