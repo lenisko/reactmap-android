@@ -11,12 +11,12 @@ plugins {
 
 android {
     namespace = "be.mygod.reactmap"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = extra["reactmap.packageName"] as String?
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 35
         versionCode = (extra["reactmap.versionCode"] as String?)?.toInt()
         versionName = extra["reactmap.versionName"] as String?
 
@@ -31,7 +31,6 @@ android {
             extra["reactmap.githubReleases"] as String
         } else "null")
         resourceConfigurations.addAll(arrayOf("en-rUS", "pl"))
-        ndk.abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
     }
 
     buildTypes {
@@ -57,16 +56,28 @@ android {
     kotlinOptions.jvmTarget = javaVersion.toString()
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     lint.informational.add("MissingTranslation")
+
+    sourceSets.getByName("main") {
+        java.srcDirs("../brotli/java")
+        java.excludes.add("**/brotli/**/*Test.java")
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 }
 
 dependencies {
     coreLibraryDesugaring(libs.desugar)
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
     implementation(platform(libs.firebase.bom))
     implementation(libs.activity)
     implementation(libs.browser)
     implementation(libs.core.ktx)
     implementation(libs.firebase.analytics)
-    implementation(libs.firebase.crashlytics.ndk)   // without Play console we need to use ndk to see native crashes
+    implementation(libs.firebase.crashlytics.ndk)
     implementation(libs.fragment.ktx)
     implementation(libs.hiddenapibypass)
     implementation(libs.material)

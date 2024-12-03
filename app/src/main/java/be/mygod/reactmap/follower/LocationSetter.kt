@@ -25,6 +25,7 @@ import org.json.JSONException
 import org.json.JSONObject
 import timber.log.Timber
 import java.io.IOException
+import java.net.HttpURLConnection
 
 class LocationSetter(appContext: Context, workerParams: WorkerParameters) : CoroutineWorker(appContext, workerParams) {
     companion object {
@@ -78,33 +79,61 @@ class LocationSetter(appContext: Context, workerParams: WorkerParameters) : Coro
     override suspend fun doWork() = try {
         val lat = inputData.getDouble(KEY_LATITUDE, Double.NaN)
         val lon = inputData.getDouble(KEY_LONGITUDE, Double.NaN)
-        val time = inputData.getLong(KEY_TIME, 0)
         val apiUrl = inputData.getString(KEY_API_URL)!!
-        val conn = ReactMapHttpEngine.connectWithCookie(apiUrl) { conn ->
-            conn.doOutput = true
+        doWork(lat, lon, inputData.getLong(KEY_TIME, 0), apiUrl, ReactMapHttpEngine.connectWithCookie(apiUrl) { conn ->
             conn.requestMethod = "POST"
             conn.addRequestProperty("Content-Type", "application/json")
-            conn.outputStream.bufferedWriter().use {
-                it.write(JSONObject().apply {
-                    put("operationName", "Webhook")
-                    put("variables", JSONObject().apply {
-                        put("category", "setLocation")
-                        put("data", JSONArray(arrayOf(lat, lon)))
-                        put("status", "POST")
-                    })
-                    // epic graphql query yay >:(
-                    put("query", "mutation Webhook(\$data: JSON, \$category: String!, \$status: String!) {" +
-                            "webhook(data: \$data, category: \$category, status: \$status) {" +
-                            "human { current_profile_no name type } } }")
-                }.toString())
+            ReactMapHttpEngine.writeCompressed(conn, JSONObject().apply {
+                put("operationName", "Webhook")
+                put("variables", JSONObject().apply {
+                    put("category", "setLocation")
+                    put("data", JSONArray(arrayOf(lat, lon)))
+                    put("status", "POST")
+                })
+                // epic graphql query yay >:(
+                put("query", "mutation Webhook(\$data: JSON, \$category: String!, \$status: String!) {" +
+                        "webhook(data: \$data, category: \$category, status: \$status) {" +
+                        "human { current_profile_no name type } } }")
+            }.toString())
+        })
+    } catch (e: IOException) {
+        Timber.d(e)
+        Result.retry()
+    } catch (_: CancellationException) {
+        Result.failure()
+    } catch (e: Exception) {
+        Timber.w(e)
+        notifyError(e.readableMessage)
+        Result.failure()
+    }
+    private fun notifyErrors(response: String, json: JSONObject? = null): Boolean {
+        var shouldWarn = true
+        notifyError(try {
+            val errors = (json ?: JSONObject(response)).getJSONArray("errors")
+            (0 until errors.length()).joinToString("\n") {
+                val error = errors.getJSONObject(it)
+                if (error.optJSONObject("extensions")?.optString("code") == "INTERNAL_SERVER_ERROR") {
+                    shouldWarn = false
+                }
+                error.getString("message")
             }
-        }
-        when (val code = conn.responseCode) {
+        } catch (e: JSONException) {
+            response
+        })
+        return shouldWarn
+    }
+    private suspend fun doWork(lat: Double, lon: Double, time: Long, apiUrl: String, conn: HttpURLConnection): Result {
+        return when (val code = conn.responseCode) {
             200 -> {
                 val response = conn.inputStream.bufferedReader().readText()
                 val human = try {
-                    val webhook = JSONObject(response).getJSONObject("data").getJSONObject("webhook")
-                    if (webhook.opt("human") == null) {
+                    val obj = JSONObject(response)
+                    val webhook = obj.getJSONObject("data").optJSONObject("webhook")
+                    if (webhook == null) {
+                        if (notifyErrors(response, obj)) Timber.w(response) else Timber.w(Exception(response))
+                        return Result.retry()
+                    }
+                    if (webhook["human"] == JSONObject.NULL) {
                         withContext(Dispatchers.Main) { BackgroundLocationReceiver.stop() }
                         notifyError(app.getText(R.string.error_webhook_human_not_found))
                         throw CancellationException()
@@ -136,28 +165,24 @@ class LocationSetter(appContext: Context, workerParams: WorkerParameters) : Coro
                 }.build())
                 Result.success()
             }
+            302 -> {
+                ReactMapHttpEngine.detectBrotliError(conn)?.let { notifyError(it) }
+                Result.retry()
+            }
             else -> {
                 val error = conn.findErrorStream.bufferedReader().readText()
-                val json = JSONObject(error).getJSONArray("errors")
-                notifyError((0 until json.length()).joinToString { json.getJSONObject(it).getString("message") })
+                notifyErrors(error)
                 if (code == 401 || code == 511) {
                     withContext(Dispatchers.Main) { BackgroundLocationReceiver.stop() }
                     Result.failure()
                 } else {
-                    Timber.w(Exception(error + code))
+                    if (code == 502 || code == 522 || code == 523) {
+                        Timber.d(Exception(error + code))
+                    } else Timber.w(Exception(error + code))
                     Result.retry()
                 }
             }
         }
-    } catch (e: IOException) {
-        Timber.d(e)
-        Result.retry()
-    } catch (_: CancellationException) {
-        Result.failure()
-    } catch (e: Exception) {
-        Timber.w(e)
-        notifyError(e.readableMessage)
-        Result.failure()
     }
 
     override suspend fun getForegroundInfo() = ForegroundInfo(2, Notification.Builder(app, CHANNEL_ID).apply {
